@@ -3,6 +3,7 @@ import time
 from pyqtgraph.Qt import QtGui, QtCore
 from datetime import datetime
 from serial import SerialException, SerialTimeoutException
+from importlib import import_module, reload
 
 from com.pycboard import Pycboard, PyboardError, _djb2_file
 from com.data_logger import Data_logger
@@ -276,6 +277,7 @@ class Run_task_tab(QtGui.QWidget):
             self.variables_button.setEnabled(False)
             self.repaint()
             self.board.setup_state_machine(task, uploaded=self.uploaded)
+            self.initialise_API()
             if self.variables_dialog:
                 self.variables_button.clicked.disconnect()
                 self.variables_dialog.deleteLater()
@@ -295,6 +297,37 @@ class Run_task_tab(QtGui.QWidget):
         except PyboardError:
             self.status_text.setText('Error setting up state machine.')
      
+    def initialise_API(self):
+        # If task file specifies a user API attempt to initialise it.
+        self.user_API = None # Remove previous API.
+        # Remove previous API from data consumers.
+        self.data_logger.data_consumers = [self.task_plot] 
+        if not 'api_class' in self.board.sm_info['variables']:
+            return # Task does not use API.
+        API_name = eval(self.board.sm_info['variables']['api_class'])
+        # Try to import and instantiate the user API.
+        try:
+            user_module_name = 'api.user_classes.{}'.format(API_name)
+            user_module = import_module(user_module_name)
+            reload(user_module)
+        except ModuleNotFoundError:
+            self.print_to_log('\nCould not find user API module: {}'
+                              .format(user_module_name))
+            return
+        if not hasattr(user_module, API_name):
+            self.print_to_log('\nCould not find user API class "{}" in {}'
+                .format(API_name, user_module_name))
+            return
+        try:
+            user_API_class = getattr(user_module, API_name)
+            self.user_API = user_API_class()
+            self.user_API.interface(self.board, self.print_to_log)
+            self.data_logger.data_consumers.append(self.user_API)
+            self.print_to_log('\nInitialised API: {}'.format(API_name))
+        except Exception as e:
+            self.print_to_log('Unable to intialise API: {}\n\n'.format(API_name)
+                              + 'Traceback: \n\n {}'.format(e))
+
     def select_data_dir(self):
         self.data_dir_text.setText(
             QtGui.QFileDialog.getExistingDirectory(self, 'Select data folder', data_dir))
