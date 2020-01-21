@@ -10,9 +10,7 @@ class Reversal_learning(Api):
     def __init__(self):
         self.mov_avs = [] # List to hold trial by trial choice moving average.
         # Setup plot figure.
-        plt.close('all')
-        self.figure = plt.figure()
-        self.ax = self.figure.add_subplot(111)
+        self.setup_figure()
         self.ax.set_ylim((0,1))
         self.ax.set_xlim(0.5,5.5)
         self.ax.set_xlabel('Trial Number')

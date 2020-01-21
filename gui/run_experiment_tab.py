@@ -7,6 +7,7 @@ from shutil import copyfile
 
 from pyqtgraph.Qt import QtGui, QtCore
 from serial import SerialException
+from importlib import import_module, reload
 
 from config.gui_settings import  update_interval
 from config.paths import tasks_dir
@@ -148,6 +149,7 @@ class Run_experiment_tab(QtGui.QWidget):
                     self.subjectboxes[i].error()
                     self.abort_experiment()
                     return
+
         # Setup state machines.
         for i, board in enumerate(self.boards):
             try:
@@ -191,6 +193,11 @@ class Run_experiment_tab(QtGui.QWidget):
                     self.subjectboxes[i].error()
                     self.abort_experiment()
                     return
+
+        self.initialise_API()
+        for i, board in enumerate(self.boards):
+            if self.APIs[i]: self.APIs[i].set_state_machine(board.sm_info)
+
         # Save task file to experiments tasks folder if current version not already saved.
         task_file_path = os.path.join(tasks_dir, experiment['task']+'.py')
         task_hash = self.boards[0].sm_info['task_hash'] # djb2 hash of task file.
@@ -205,6 +212,45 @@ class Run_experiment_tab(QtGui.QWidget):
         self.logs_button.setEnabled(True)
         self.plots_button.setEnabled(True)
         self.status_text.setText('Ready')
+
+    def initialise_API(self):
+        # If task file specifies a user API attempt to initialise it.
+        self.APIs = [None] * len(self.boards)
+        for i, board in enumerate(self.boards):
+            print_to_log = self.subjectboxes[i].print_to_log
+            # Remove previous API from data consumers.
+            ### Currently commented out as API is initialised after Data_logger
+            # board.data_logger.data_consumers = [self.experiment_plot.
+                                                # subject_plots[i], 
+                                                # self.subjectboxes[i]]
+            if not 'api_class' in board.sm_info['variables']:
+                return  #  Setup does not use API.
+            API_name = eval(board.sm_info['variables']['api_class'])
+            # Try to import and instantiate the user API.
+            try:
+                user_module_name = 'api.user_classes.{}'.format(API_name)
+                user_module = import_module(user_module_name)
+                reload(user_module)
+            except ModuleNotFoundError:
+                print_to_log('\nCould not find user API module: {}'
+                                  .format(user_module_name))
+                return
+            if not hasattr(user_module, API_name):
+                print_to_log('\nCould not find user API class "{}" in {}'
+                    .format(API_name, user_module_name))
+                return
+            
+            try:
+                user_API_class = getattr(user_module, API_name)
+                user_API_class.set_experiment_info(self.experiment, setup_idx=i)
+                user_API = user_API_class()
+                user_API.interface(board, print_to_log)
+                print_to_log('\nInitialised API: {}'.format(API_name))
+                self.APIs[i] = user_API
+                board.data_logger.data_consumers.append(user_API)
+            except Exception as e:
+                print_to_log('Unable to intialise API: {}\n\n'.format(API_name)
+                                  + 'Traceback: \n\n {}'.format(e))
 
     def start_experiment(self):
         '''Open data files, write variables set pre run to file, start framework.'''
@@ -222,6 +268,7 @@ class Run_experiment_tab(QtGui.QWidget):
                     board.data_logger.data_file.write('V 0 {} {}\n'.format(v_name, v_value))
             board.data_logger.data_file.write('\n')
             board.start_framework()
+            if self.APIs[i]: self.APIs[i].run_start(True)
         self.GUI_main.refresh_timer.stop()
         self.update_timer.start(update_interval)
 
@@ -238,6 +285,7 @@ class Run_experiment_tab(QtGui.QWidget):
                 time.sleep(0.05)
                 board.process_data()
                 self.subjectboxes[i].task_stopped()
+                if self.APIs[i]: self.APIs[i].run_stop()
         # Summary and persistent variables.
         summary_variables = [v for v in self.experiment['variables'] if v['summary']]
         sv_dict = OrderedDict()
@@ -330,6 +378,7 @@ class Run_experiment_tab(QtGui.QWidget):
                     board.process_data()
                     if not board.framework_running:
                         self.subjectboxes[i].task_stopped()
+                    if self.APIs[i]: self.APIs[i].update()
                 except PyboardError:
                     self.subjectboxes[i].error()
         self.experiment_plot.update()
