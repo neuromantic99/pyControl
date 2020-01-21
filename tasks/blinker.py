@@ -2,11 +2,6 @@
 # Does not require any hardware except micropython board.
 
 from pyControl.utility import *
-from devices import *
-
-# Define hardware (normally done in seperate hardware definition file).
-
-blue_LED = Digital_output('B4')
 
 # States and events.
 
@@ -16,24 +11,24 @@ states = ['LED_on',
 events = []
 
 initial_state = 'LED_off'
-        
-v.api_class = 'Blinker'  # Uncomment to use Blinker API example.
 
+# Variables.
+
+v.LED_n  = 4 # Number of LED to use.
+v.api_class = 'Blinker' # Uncomment to use Blinker API example.
+        
 # Define behaviour. 
 
 def LED_on(event):
     if event == 'entry':
         timed_goto_state('LED_off', 0.5 * second)
-        blue_LED.on()
+        pyb.LED(v.LED_n).on()
     elif event == 'exit':
-        blue_LED.off()
+        pyb.LED(v.LED_n).off()
 
 def LED_off(event):
     if event == 'entry':
         timed_goto_state('LED_on', 0.5 * second)
 
 def run_end():  # Turn off hardware at end of run.
-    blue_LED.off()
-
-
-
+    pyb.LED(v.LED_n).off()

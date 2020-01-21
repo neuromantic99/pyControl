@@ -33,6 +33,7 @@ class Run_task_tab(QtGui.QWidget):
         self.connected = False # Whether gui is conencted to pyboard.
         self.uploaded = False # Whether selected task file is on board.
         self.fresh_task = None # Whether task has been run or variables edited.
+        self.user_API = None   # Overwritten by user API class.
         self.running = False
         self.subject_changed = False
         self.variables_dialog = None
@@ -316,7 +317,7 @@ class Run_task_tab(QtGui.QWidget):
             return
         if not hasattr(user_module, API_name):
             self.print_to_log('\nCould not find user API class "{}" in {}'
-                .format(API_name, user_module_name))
+                              .format(API_name, user_module_name))
             return
         try:
             user_API_class = getattr(user_module, API_name)
@@ -348,6 +349,7 @@ class Run_task_tab(QtGui.QWidget):
         self.running = True
         self.board.start_framework()
         self.task_plot.run_start(recording)
+        if self.user_API: self.user_API.run_start(recording)
         self.task_select.setEnabled(False)
         self.upload_button.setEnabled(False)
         self.file_groupbox.setEnabled(False)
@@ -373,6 +375,7 @@ class Run_task_tab(QtGui.QWidget):
             self.board.process_data()
         self.data_logger.close_files()
         self.task_plot.run_stop()
+        if self.user_API: self.user_API.run_stop()
         self.board_groupbox.setEnabled(True)
         self.file_groupbox.setEnabled(True)
         self.start_button.setEnabled(True)
@@ -395,6 +398,7 @@ class Run_task_tab(QtGui.QWidget):
             self.print_to_log('\nError during framework run.')
             self.stop_task(error=True)
         self.task_plot.update()
+        if self.user_API: self.user_API.update()
 
     # Cleanup.
 
