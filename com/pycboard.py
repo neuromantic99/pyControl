@@ -5,7 +5,7 @@ import inspect
 from serial import SerialException
 from array import array
 from .pyboard import Pyboard, PyboardError
-from config.paths import config_dir, framework_dir, devices_dir, tasks_dir
+from config.paths import dirs
 
 # ----------------------------------------------------------------------------------------
 #  Helper functions.
@@ -22,41 +22,32 @@ def _djb2_file(file_path):
             h = ((h << 5) + h + int.from_bytes(c,'little')) & 0xFFFFFFFF           
     return h
 
-# Used on pyboard to remove directories or files.
-def _rm_dir_or_file(i):
-    try:
-        os.remove(i)
-    except OSError:
-        os.chdir(i)
-        for j in os.listdir():
-            _rm_dir_or_file(j)
-        os.chdir('..')
-        os.rmdir(i)
-
-# Used on pyboard to clear filesystem.
-def _reset_pyb_filesystem():
-    os.chdir('/flash')
-    for i in os.listdir():
-        if i not in ['System Volume Information', 'boot.py']:
-            _rm_dir_or_file(i)
+# Used on pyboard to measure free space on filesystem.
+def _fs_free_space(drive='/flash'):
+    fs_stat = os.statvfs(drive)
+    return fs_stat[0] * fs_stat[3]
 
 # Used on pyboard for file transfer.
 def _receive_file(file_path, file_size):
-    gc.collect()
     usb = pyb.USB_VCP()
     usb.setinterrupt(-1)
     buf_size = 512
     buf = bytearray(buf_size)
     buf_mv = memoryview(buf)
     bytes_remaining = file_size
-    with open(file_path, 'wb') as f:
-        while bytes_remaining > 0:
-            bytes_read = usb.recv(buf, timeout=5)
-            usb.write(b'0')
-            if bytes_read:
-                bytes_remaining -= bytes_read
-                f.write(buf_mv[:bytes_read])
-    gc.collect()
+    try:
+        with open(file_path, 'wb') as f:
+            while bytes_remaining > 0:
+                bytes_read = usb.recv(buf, timeout=5)
+                usb.write(b'OK')
+                if bytes_read:
+                    bytes_remaining -= bytes_read
+                    f.write(buf_mv[:bytes_read])
+    except:
+        if _fs_free_space() < bytes_remaining:
+            usb.write(b'NS') # Out of space.
+        else:
+            usb.write(b'ER')
 
 # ----------------------------------------------------------------------------------------
 #  Pycboard class.
@@ -101,8 +92,9 @@ class Pycboard(Pyboard):
     def reset(self):
         '''Enter raw repl (soft reboots pyboard), import modules.'''
         self.enter_raw_repl() # Soft resets pyboard.
-        self.exec(inspect.getsource(_djb2_file))  # define djb2 hashing function.
+        self.exec(inspect.getsource(_djb2_file))     # define djb2 hashing function.
         self.exec(inspect.getsource(_receive_file))  # define recieve file function.
+        self.exec(inspect.getsource(_fs_free_space)) # define file system free space function.
         self.exec('import os; import gc; import sys; import pyb')
         self.framework_running = False
         error_message = None
@@ -191,27 +183,34 @@ class Pycboard(Pyboard):
             target_path = os.path.split(file_path)[-1]
         file_size = os.path.getsize(file_path)
         file_hash = _djb2_file(file_path)
-        try:
-            for i in range(10):
-                    if file_hash == self.get_file_hash(target_path):
-                        return
-                    try:
-                        self.remove_file(file_path)
-                    except PyboardError:
-                        pass
-                    self.exec_raw_no_follow("_receive_file('{}',{})"
-                                            .format(target_path, file_size))
-                    with open(file_path, 'rb') as f:
-                        while True:
-                            chunk = f.read(512)
-                            if not chunk:
-                                break
-                            self.serial.write(chunk)
-                            self.serial.read(1)
-                    self.follow(5)
-        except PyboardError:
-            self.print('\n\nError: Unable to transfer file.')
-            raise PyboardError
+        error_message = '\n\nError: Unable to transfer file. See the troubleshooting docs:\n' \
+                        'https://pycontrol.readthedocs.io/en/latest/user-guide/troubleshooting/'
+        # Try to load file, return once file hash on board matches that on computer.
+        for i in range(10):
+            if file_hash == self.get_file_hash(target_path):
+                return
+            self.exec_raw_no_follow("_receive_file('{}',{})"
+                                    .format(target_path, file_size))
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(512)
+                    if not chunk:
+                        break
+                    self.serial.write(chunk)
+                    response_bytes = self.serial.read(2)
+                    if response_bytes != b'OK':
+                        if response_bytes == b'NS':
+                            self.print('\n\nInsufficient space on pyboard filesystem to transfer file.')
+                        else:
+                            self.print(error_message)
+                        time.sleep(0.01)
+                        self.serial.reset_input_buffer()
+                        raise PyboardError
+                self.follow(3)
+        # Unable to transfer file.
+        self.print(error_message)
+        raise PyboardError
+
 
     def transfer_folder(self, folder_path, target_folder=None, file_type='all',
                         show_progress=False):
@@ -226,7 +225,13 @@ class Pycboard(Pyboard):
         try:
             self.exec('os.mkdir({})'.format(repr(target_folder)))
         except PyboardError:
-            pass # Folder already exists.
+            # Folder already exists, remove any files not in sending folder.
+            target_files = eval(self.eval('os.listdir({})'.format(
+                repr(target_folder))).decode())
+            remove_files = list(set(target_files)-set(files))
+            for f in remove_files:
+                target_path = target_folder + '/' + f
+                self.remove_file(target_path)
         for f in files:
             file_path = os.path.join(folder_path, f)
             target_path = target_folder + '/' + f
@@ -238,25 +243,16 @@ class Pycboard(Pyboard):
     def remove_file(self, file_path):
         '''Remove a file from the pyboard.'''
         self.exec('os.remove({})'.format(repr(file_path)))
-
-    def reset_filesystem(self):
-        '''Delete all files in the flash drive apart from boot.py'''
-        self.print('Resetting filesystem.')
-        self.reset()
-        self.exec(inspect.getsource(_rm_dir_or_file))
-        self.exec(inspect.getsource(_reset_pyb_filesystem)) 
-        self.exec_raw('_reset_pyb_filesystem()', timeout=60)
-        self.hard_reset() 
-        
+  
     # ------------------------------------------------------------------------------------
     # pyControl operations.
     # ------------------------------------------------------------------------------------
 
-    def load_framework(self, framework_dir=framework_dir):
+    def load_framework(self):
         '''Copy the pyControl framework folder to the board.'''
         self.print('\nTransfering pyControl framework to pyboard.', end='')
-        self.transfer_folder(framework_dir, file_type='py', show_progress=True)
-        self.transfer_folder(devices_dir  , file_type='py', show_progress=True)
+        self.transfer_folder(dirs['framework'], file_type='py', show_progress=True)
+        self.transfer_folder(dirs['devices']  , file_type='py', show_progress=True)
         error_message = self.reset()
         if not self.status['framework']:
             self.print('\nError importing framework:')
@@ -265,7 +261,7 @@ class Pycboard(Pyboard):
             self.print(' OK')
         return 
 
-    def load_hardware_definition(self, hwd_path=os.path.join(config_dir, 'hardware_definition.py')):
+    def load_hardware_definition(self, hwd_path=os.path.join(dirs['config'], 'hardware_definition.py')):
         '''Transfer a hardware definition file to pyboard.  Defaults to transfering 
         file hardware_definition.py from config folder.'''
         if os.path.exists(hwd_path):
@@ -282,14 +278,16 @@ class Pycboard(Pyboard):
         else:
             self.print('Hardware definition file not found.') 
 
-    def setup_state_machine(self, sm_name, sm_dir=tasks_dir, uploaded=False):
+    def setup_state_machine(self, sm_name, sm_dir=None, uploaded=False):
         '''Transfer state machine descriptor file sm_name.py from folder sm_dir
         to board. Instantiate state machine object as state_machine on pyboard.'''
         self.reset()
+        if sm_dir is None:
+            sm_dir = dirs['tasks']
+        sm_path = os.path.join(sm_dir, sm_name + '.py')
         if uploaded:
-            self.print('\n Resetting task. ', end='')
+            self.print('\nResetting task. ', end='')
         else:
-            sm_path = os.path.join(sm_dir, sm_name + '.py')
             if not os.path.exists(sm_path):
                 self.print('Error: State machine file not found at: ' + sm_path)
                 raise PyboardError('State machine file not found at: ' + sm_path)
@@ -354,7 +352,10 @@ class Pycboard(Pyboard):
             new_byte = self.serial.read(1)  
             if new_byte == b'A': # Analog data, 13 byte header + variable size content.
                 data_header = self.serial.read(13)
-                typecode      = data_header[0:1].decode()             
+                typecode      = data_header[0:1].decode() 
+                if typecode not in ('b','B','h','H','l','L'):
+                    new_data.append(('!','bad typecode A'))
+                    continue   
                 ID            = int.from_bytes(data_header[1:3], 'little')
                 sampling_rate = int.from_bytes(data_header[3:5], 'little')
                 data_len      = int.from_bytes(data_header[5:7], 'little')

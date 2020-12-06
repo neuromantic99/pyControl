@@ -1,11 +1,17 @@
 import os
+import json
 
 from pyqtgraph.Qt import QtGui, QtCore
 
-from config.paths import config_dir
+from config.paths import dirs, update_paths
 from gui.utility import variable_constants
 
 # Board_config_dialog -------------------------------------------------
+
+flashdrive_message = (
+    'It is recommended to disable the pyboard filesystem from acting as a '
+    'USB flash drive before loading the framework, as this helps prevent the '
+    'filesystem getting corrupted. Do you want to disable the flashdrive?')
 
 class Board_config_dialog(QtGui.QDialog):
 
@@ -40,11 +46,18 @@ class Board_config_dialog(QtGui.QDialog):
 
     def load_framework(self):
         self.accept()
+        if self.flashdrive_enabled:
+            reply = QtGui.QMessageBox.question(self, 'Disable flashdrive', 
+                flashdrive_message, QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
+            if reply == QtGui.QMessageBox.Yes:
+                self.board.disable_mass_storage()
+                self.disconnect = True
+                return
         self.board.load_framework()
 
     def load_hardware_definition(self):
         hwd_path = QtGui.QFileDialog.getOpenFileName(self, 'Select hardware definition:',
-                    os.path.join(config_dir, 'hardware_definition.py'), filter='*.py')[0]
+                    os.path.join(dirs['config'], 'hardware_definition.py'), filter='*.py')[0]
         self.accept()
         self.board.load_hardware_definition(hwd_path)
 
@@ -83,7 +96,8 @@ class Variables_grid(QtGui.QWidget):
         variables = board.sm_info['variables']
         self.grid_layout = QtGui.QGridLayout()
         for i, (v_name, v_value_str) in enumerate(sorted(variables.items())):
-            Variable_setter(v_name, v_value_str, self.grid_layout, i, self, board)
+            if not v_name[-3:] == '___':
+                Variable_setter(v_name, v_value_str, self.grid_layout, i, self, board)
         self.setLayout(self.grid_layout)
 
 class Variable_setter(QtGui.QWidget):
@@ -194,40 +208,120 @@ class Summary_variables_dialog(QtGui.QDialog):
 
 # Invalid experiment dialog. ---------------------------------------------------------
 
-def invalid_experiment_dialog(parent, message):
-    QtGui.QMessageBox.question(parent, 'Invalid experiment', 
+def invalid_run_experiment_dialog(parent, message):
+    QtGui.QMessageBox.warning(parent, 'Invalid experiment', 
         message + '\n\nUnable to run experiment.', QtGui.QMessageBox.Ok)
 
+def invalid_save_experiment_dialog(parent, message):
+    QtGui.QMessageBox.warning(parent, 'Invalid experiment', 
+        message + '\n\nUnable to save experiment.', QtGui.QMessageBox.Ok)
+
+# Unrun subjects warning     ---------------------------------------------------------
+
+def unrun_subjects_dialog(parent,message):
+    reply = QtGui.QMessageBox.warning(parent, 'Unrun Subjects', 
+        'The following Subjects will not be run:\n\n{}'.format(message), (QtGui.QMessageBox.Ok | QtGui.QMessageBox.Cancel))
+    if reply == QtGui.QMessageBox.Ok:
+        return True
+    else:
+        return False
+        
 # Keyboard shortcuts dialog. ---------------------------------------------------------
 
 class Keyboard_shortcuts_dialog(QtGui.QDialog):
-    '''Dialog for displaying summary variables from an experiment as a table.
-    The table is copied to the clipboard as a string that can be pasted into a
-    spreadsheet.'''
+    '''Dialog for displaying information about keyboard shortcuts.'''
     def __init__(self, parent):
         super(QtGui.QDialog, self).__init__(parent)
-        self.setWindowTitle('Keyboard shortcuts')
+        self.setWindowTitle('Shortcuts')
 
         self.Vlayout = QtGui.QVBoxLayout(self)
 
-        self.textbox = QtGui.QTextEdit()
-        self.textbox.setReadOnly(True)
+        label = QtGui.QLabel('<center><b>Keyboard Shortcuts</b></center<br></br>')
+        label.setFont(QtGui.QFont('Helvetica', 12))
+        self.Vlayout.addWidget(label)
 
-        self.textbox.insertHtml('<p><b>Global shortcuts:</b></p>\n')
+        label_strings = [
+            '<b><u>Global:</u></b>',
+            '<b style="color:#0220e0;">Ctrl + t</b> : Open tasks folder',
+            '<b style="color:#0220e0;">Ctrl + d</b> : Open data folder',
+        
+            '<br></br><b><u>Run task tab:</u></b>',
+            '<b style="color:#0220e0;">    t    </b> : Select task',
+            '<b style="color:#0220e0;">    u    </b> : Upload/reset task',
+            '<b style="color:#0220e0;">spacebar </b> : Start/stop task',
 
-        self.textbox.insertPlainText('\n'
-            'Ctrl + t : ppen tasks folder\n'
-            'Ctrl + d : Open data folder\n')
+            '<br></br><b><u>Experiments tab:</u></b>',
+            '<b style="color:#0220e0;">Ctrl + s</b> : Save experiment ']
 
-        self.textbox.insertHtml('<p><b>Run task tab:</b></p>\n')
+        for ls in label_strings:
+            label = QtGui.QLabel(ls)
+            label.setFont(QtGui.QFont('Helvetica', 10))
+            self.Vlayout.addWidget(label)
 
-        self.textbox.insertPlainText('\n'
-            'U        : Upload/reset task\n'
-            'spacebar : Start/stop task\n')
+        self.setFixedSize(self.sizeHint())
 
-        self.textbox.insertHtml('<p><b>Experiments tab:</b></p>\n')
+# Paths dialog. ---------------------------------------------------------
 
-        self.textbox.insertPlainText('\n'
-            'Ctrl + s : save experiment\n')        
+class Path_setter():
+    def __init__(self, name, path, edited, dialog):
+        self.name = name
+        self.path = os.path.normpath(path)
+        self.edited = edited
+        self.dialog = dialog
+        # Instantiate widgets
+        self.name_label = QtGui.QLabel(name +' folder:')
+        self.path_text = QtGui.QLineEdit(self.path)
+        self.path_text.setReadOnly(True)
+        self.path_text.setFixedWidth(400)
+        self.change_button = QtGui.QPushButton('Change')
+        self.change_button.clicked.connect(self.select_path)
+        # Layout
+        self.hlayout = QtGui.QHBoxLayout()
+        self.hlayout.addWidget(self.name_label)
+        self.hlayout.addWidget(self.path_text)
+        self.hlayout.addWidget(self.change_button)
+        self.dialog.Vlayout.addLayout(self.hlayout)
 
-        self.Vlayout.addWidget(self.textbox)
+        self.dialog.setters.append(self)
+
+    def select_path(self):
+        new_path = QtGui.QFileDialog.getExistingDirectory(
+            self.dialog, 'Select {} folder'.format(self.name), self.path)
+        if new_path:
+            new_path = os.path.normpath(new_path)
+            if new_path != self.path:
+                self.path = new_path
+                self.edited = True
+                self.path_text.setText(new_path)
+
+class Paths_dialog(QtGui.QDialog):
+    '''Dialog for displaying information about keyboard shortcuts.'''
+    def __init__(self, parent):
+        super(QtGui.QDialog, self).__init__(parent)
+        self.setWindowTitle('Paths')
+
+        self.Vlayout = QtGui.QVBoxLayout(self)
+        self.setters = []
+
+        # Instantiate setters
+        self.tasks_setter = Path_setter('tasks', dirs['tasks'], False, self)
+        self.data_setter  = Path_setter('data' , dirs['data'] , False, self)
+
+        self.setFixedSize(self.sizeHint())
+
+    def closeEvent(self, event):
+        '''Save any user edited paths as json in config folder.'''
+        edited_paths = {s.name: s.path for s in self.setters if s.edited}
+        if edited_paths:
+            # Store newly edited paths.
+            json_path = os.path.join(dirs['config'],'user_paths.json')
+            if os.path.exists(json_path):
+                with open(json_path,'r') as f:
+                    user_paths = json.loads(f.read())
+            else:
+                user_paths = {}
+            user_paths.update(edited_paths)
+            with open(json_path, 'w') as f:
+                f.write(json.dumps(user_paths))
+            self.parent().data_dir_changed = True
+            update_paths(user_paths)
