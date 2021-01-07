@@ -18,7 +18,7 @@ class Reversal_learning(Api):
         self.line = self.ax.plot([], [], '*-b')[0]
         plt.show()
 
-    def run_start(self, recording):
+    def run_start(self):
         self.print_to_log('\nUsing api to plot reversal learning moving average of choices')
 
     def process_data_user(self, data):

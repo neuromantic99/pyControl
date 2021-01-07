@@ -285,6 +285,7 @@ class Run_experiment_tab(QtGui.QWidget):
                 user_API.interface(board, print_to_log)
                 print_to_log('\nInitialised API: {}'.format(API_name))
                 self.APIs[i] = user_API
+                user_API.api_communication(self.APIs)
                 board.data_logger.data_consumers.append(user_API)
             except Exception as e:
                 print_to_log('Unable to intialise API: {}\n\n'.format(API_name)

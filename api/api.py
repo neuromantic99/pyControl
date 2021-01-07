@@ -39,7 +39,6 @@ class Api():
                (name of state or event / printed string, time)
 
         '''
-
         pass
 
     def update(self):
@@ -78,46 +77,38 @@ class Api():
 
     def setup_figure(self):
 
-        ''' Assign figure and ax attributes to api. A grid of subplots is built
-            if called as part of an experiment with one plot for each setup '''
+        ''' Creates a figure for each setup and assigns figure 
+        and ax attributes to user class api. 
+        Sets the title of the figure to subject ID if called as
+        part of an experiment
+        '''
 
-        if not hasattr(self, 'experiment_info'):  # API used as part of task
-            self.figure = plt.figure()
-            self.ax = self.figure.add_subplot(111)
-            return
+        self.figure = plt.figure()
+        self.ax = self.figure.add_subplot(111)
 
-        subjects = self.experiment_info['subjects']
+        # Set plot title to API used as part of experiment
+        if hasattr(self, 'experiment_info'):  
+            self.ax.set_title(self.subject_id)
 
-        n_plots = len(subjects)
-        sr =  np.sqrt(n_plots)
-        # Calculate a subplot arrangement for n_plots
-        if np.ceil(sr) == np.floor(sr):
-            n_rows = n_cols = sr
-        else:
-            n_cols = np.ceil(sr)
-            n_rows = np.ceil(n_plots / n_cols)
-
-        self.figure = plt.gcf()
-        self.ax = self.figure.add_subplot(n_rows, n_cols, self.setup_idx+1)
-        # self.ax.set_title(list(subjects.values())[self.setup_idx])
-        self.ax.set_title(list(subjects.keys())[self.setup_idx])
 
     # ----------------------------------------------------------
     # User should not overwrite or call these functions
     # ----------------------------------------------------------
 
     def interface(self, board, print_to_log):
+        ''' Called once when task is uploaded and api is initialised.
+        Gives api access to board object and print_to_log method
+        '''
+
         # Connect Api with pyboard and gui.
         self.board = board
         self.print_to_log = print_to_log
         self.ID2name = self.board.sm_info['ID2name']
 
     def process_data(self, new_data):
-        ''' User doesnt call or overwrite this function. 
-        Called by the gui 
-        every time there is new data. Processes new_data from
-        the board and processes it to a user friendly data
-        structure. Then passes new data structure to
+        ''' Called directly by the gui every time there is new data.
+        Recieves new_data from the board and processes it to a user 
+        friendly data structure. Then passes new data structure to
         process_data_user.
 
         Im not totally happy with this data structure
@@ -125,7 +116,6 @@ class Api():
         a list of tuples, could nested dictionaries or named
         tuples be better?
         '''
-
 
         data = {'states': [],
                 'events': [],
@@ -144,21 +134,26 @@ class Api():
 
         self.process_data_user(data)
 
+    def api_communication(self, APIs):
+        ''' Gives the api class access to the other api 
+        instantiations in an experiment. Allows for example
+        one setup to change variables on another.
+        '''
+        self.other_APIs = APIs
+
     @classmethod
     def set_experiment_info(cls, experiment_info, setup_idx):
 
-        ''' User should not overwrite this.
-            Calling this function as a classmethod allows
-            the gui to make available variables to the user
-            before the user's class is instantiated.
-            
-            This provides information about the experiment to each
-            setup.
-
-            '''
+        ''' Gives the user access to info about the experiment
+        upon instantiation of the user api class.
+        '''
+        # Info about the experiment, incuding other subjects
         cls.experiment_info = experiment_info
+        # The index of this setup
         cls.setup_idx = setup_idx
-
+        # The subject ID of this setup
+        cls.subject_id = list(experiment_info['subjects']
+                               .keys())[setup_idx]
 
     # Note:  get_variable functionality not implemented because board.get_variable method 
     # does not return variable value when framework is running, just causes it to be output
