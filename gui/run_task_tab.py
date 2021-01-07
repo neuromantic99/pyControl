@@ -384,7 +384,7 @@ class Run_task_tab(QtGui.QWidget):
         self.running = True
         self.board.start_framework()
         self.task_plot.run_start(recording)
-        if self.user_API: self.user_API.run_start(recording)
+        if self.user_API: self.user_API.run_start()
         self.task_select.setEnabled(False)
         self.upload_button.setEnabled(False)
         self.file_groupbox.setEnabled(False)

@@ -224,10 +224,6 @@ class Run_experiment_tab(QtGui.QWidget):
                     self.abort_experiment()
                     return
 
-        self.initialise_API()
-        for i, board in enumerate(self.boards):
-            if self.APIs[i]: self.APIs[i].set_state_machine(board.sm_info)
-
         # Setup task
         self.print_to_logs('\nSetting up task.')
         self.thread_map(self.setup_task)
@@ -247,6 +243,11 @@ class Run_experiment_tab(QtGui.QWidget):
         self.plots_button.setEnabled(True)
         self.setups_started  = 0
         self.setups_finished = 0
+
+        # Initialise API
+        self.initialise_API()
+        for i, board in enumerate(self.boards):
+            if self.APIs[i]: self.APIs[i].set_state_machine(board.sm_info)
 
     def initialise_API(self):
         # If task file specifies a user API attempt to initialise it.
@@ -277,6 +278,8 @@ class Run_experiment_tab(QtGui.QWidget):
             
             try:
                 user_API_class = getattr(user_module, API_name)
+                # Individual API classes for single setups also have access to 
+                # information about the experiments and other setups
                 user_API_class.set_experiment_info(self.experiment, setup_idx=i)
                 user_API = user_API_class()
                 user_API.interface(board, print_to_log)

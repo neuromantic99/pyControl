@@ -21,18 +21,21 @@ class Reversal_learning(Api):
     def run_start(self, recording):
         self.print_to_log('\nUsing api to plot reversal learning moving average of choices')
 
-    def process_data(self, new_data):
-        '''If a trial summary print line is in the new data, extract the choice moving 
-        average and update_plot.'''
+    def process_data_user(self, data):
+        '''If a trial summary print line is in the data, extract the 
+        choice moving average and update_plot.'''
 
-        printed_lines = [nd[2] for nd in new_data if nd[0] == 'P']
+        # Printed line is trial summary.        
+        trial_summary = [p[0] for p in data['prints'] if 'T#' in p[0]]
 
-        if printed_lines and 'T#:' in printed_lines[0]:  # Printed line is trial summary.        
+        if trial_summary:
+
             # Extract moving average.
-            mov_ave = printed_lines[0].split(':')[-1]
+            mov_ave = trial_summary[0].split(':')[-1]
             self.mov_avs.append(float(mov_ave))
             # Update the plot data and x axis limits.
             x = list(range(1,len(self.mov_avs)+1))
             self.line.set_data(x, self.mov_avs)
             self.ax.set_xlim(right=max(x[-1]+0.5, 5.5))
             self.figure.canvas.draw()
+
