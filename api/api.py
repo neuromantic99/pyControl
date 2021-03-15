@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import namedtuple
 
 class Api():
 
@@ -104,6 +105,17 @@ class Api():
         self.board = board
         self.print_to_log = print_to_log
         self.ID2name = self.board.sm_info['ID2name']
+        self.ID2analog = {}  # Convert analog ID to name
+        for name, info in self.board.sm_info['analog_inputs'].items():
+            self.ID2analog[info['ID']] = name
+
+        # Declare the named tuples for the user friendly data
+        # structure, so they are not newly declared with
+        # each call to process_data
+        self.event_tup = namedtuple('Event', 'name time')
+        self.state_tup = namedtuple('State', 'name time')
+        self.print_tup = namedtuple('Print', 'name time')
+        self.analog_tup = namedtuple('Analog', 'name time data')
 
     def process_data(self, new_data):
         ''' Called directly by the gui every time there is new data.
@@ -111,26 +123,26 @@ class Api():
         friendly data structure. Then passes new data structure to
         process_data_user.
 
-        Im not totally happy with this data structure
-        because the user still needs to iterate through
-        a list of tuples, could nested dictionaries or named
-        tuples be better?
         '''
 
         data = {'states': [],
                 'events': [],
-                'prints': []
+                'prints': [],
+                'analog': []
                }
 
         for nd in new_data:
             if nd[0] == 'P':
-                data['prints'].append((nd[2], nd[1]))
+                data['prints'].append(self.print_tup(nd[2], nd[1]))
             elif nd[0] == 'D':
                 name = self.ID2name[nd[2]]
                 if name in self.board.sm_info['states']:
-                    data['states'].append((name, nd[1]))
+                    data['states'].append(self.state_tup(name, nd[1]))
                 else:
-                    data['events'].append((name, nd[1]))
+                    data['events'].append(self.event_tup(name, nd[1]))
+            elif nd[0] == 'A':
+                data['analog'].append(self.analog_tup(self.ID2analog[nd[1]],
+                                                      nd[3], nd[4]))
 
         self.process_data_user(data)
 
@@ -139,7 +151,9 @@ class Api():
         instantiations in an experiment. Allows for example
         one setup to change variables on another.
         '''
-        self.other_APIs = APIs
+        self.APIs = {}
+        for api in APIs:
+            self.APIs[api.subject_id] = api
 
     @classmethod
     def set_experiment_info(cls, experiment_info, setup_idx):

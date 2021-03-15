@@ -9,7 +9,7 @@ class Blinker(Api):
     def process_data_user(self, data):
 
         # Has the board transitioned into LED_off state?
-        LED_off = any(['LED_off' in state for state in data['states']])
+        LED_off = any([state.name == 'LED_off' for state in data['states']])
 
         if LED_off:
             self.i = (self.i + 1) % 4
